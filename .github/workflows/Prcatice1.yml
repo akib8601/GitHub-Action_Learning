@@ -1,0 +1,28 @@
+name: Helle work flow
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  hello:
+    #name of job what u want keep it 
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Hello world
+        run: echo "Hello world"
+         #here we are leting to runner that which shell wanted to run
+        shell: bash
+
+  goodbye:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Goodbye world
+        run: echo "Goodbye world"
+        shell: bash
