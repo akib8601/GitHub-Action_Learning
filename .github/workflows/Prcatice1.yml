@@ -9,6 +9,17 @@ on:
       - main
   workflow_dispatch:
 
+#  Job: hello
+#  hello:: This is the name of the job. You can name it anything you like.
+#  runs-on: ubuntu-latest: Specifies the type of virtual machine to run the job on. In this case, it uses the latest version of Ubuntu.
+#  steps:: Lists the individual steps that will be executed in this job.
+
+#  Steps in hello Job
+#  - uses: actions/checkout@v2: This step uses the actions/checkout action to check out your repository's code. This is often the first step in a workflow to ensure the code is available for subsequent steps.
+#  - name: Hello world: This step is named "Hello world". The name field is optional but helps to identify the step in the workflow logs.
+#  run: echo "Hello world": This command runs a shell command to print "Hello world" to the console.
+#  shell: bash: Specifies that the shell to be used for running the command is bash.
+
 jobs:
   hello:
     #name of job what u want keep it 
@@ -20,9 +31,29 @@ jobs:
          #here we are leting to runner that which shell wanted to run
         shell: bash
 
+#  Job: goodbye
+#  goodbye:: This is the name of the second job.
+#  runs-on: ubuntu-latest: Similar to the hello job, this specifies that the job will run on the latest version of Ubuntu.
+#  steps:: Lists the individual steps that will be executed in this job.
+#  Steps in goodbye Job
+#  - name: Goodbye world: This step is named "Goodbye world".
+#  run: echo "Goodbye world": This command runs a shell command to print "Goodbye world" to the console.
+#  shell: bash: Specifies that the shell to be used for running the command is bash.
+
+
   goodbye:
     runs-on: ubuntu-latest
     steps:
       - name: Goodbye world
         run: echo "Goodbye world"
         shell: bash
+
+
+#  Summary
+#  Job Names: hello and goodbye are the names of the jobs.
+#  Virtual Machine: Both jobs run on ubuntu-latest.
+#  Steps: Each job contains steps that include checking out the repository and running shell commands.
+#  
+
+
+        
