@@ -1,5 +1,11 @@
 name: Helle work flow
 
+#  Summary
+#  push:: Triggers the workflow on code pushes to the main branch.
+#  pull_request:: Triggers the workflow on pull requests targeting the main branch.
+#  workflow_dispatch:: Allows manual triggering of the workflow.
+#  
+
 on:
   push:
     branches:
