@@ -1,0 +1,43 @@
+name: Practice2
+
+on: 
+  push:
+      branches:
+        -main
+  pull_request:
+      branches:
+       -main
+
+jobs: 
+
+  job1:
+    name: Job one
+    runs-on: ubuntu-latest
+    steps:
+      - name: step1 for job1
+        run: date
+        
+
+  job2:
+    name: Job two
+    runs-on: window-latest
+    steps:
+      - name: step1 for job2
+        run: date
+        
+  
+  job3:
+    name: Job three
+    runs-on: mac-latest
+    steps:
+      - name: step1 for job3
+        run: date +"%Y-%m-%d %H:%M:%S"
+
+        
+
+  job4:
+    name: Job four
+    runs-on: ubuntu-latest
+    steps:
+      - name: step1 for job4
+        run: date +"%Y-%m-%d %H:%M:%S"
