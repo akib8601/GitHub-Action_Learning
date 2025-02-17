@@ -1,36 +1,32 @@
 name: Practice2
 
-on: 
-  push:
-      #branches:
-       # -main
-  pull_request:
-      #branches:
-       #-main
+on:
+  #push: 
+  workflow_dispatch:
 
 jobs: 
 
-  job1:
-    name: Job one
+  ubutu:
+    name: This job is running on ubutu latest runner
     runs-on: ubuntu-latest
     steps:
-      - name: step1 for job1
+      - name: step1 for ubutu
         run: date
         
 
-  job2:
-    name: Job two
+  window:
+    name: This job is running on window runner
     runs-on: window-latest
     steps:
-      - name: step1 for job2
+      - name: window
         run: date
         
   
-  job3:
-    name: Job three
+  macos:
+    name: This job is running on macos runner
     runs-on: mac-latest
     steps:
-      - name: step1 for job3
+      - name: macos
         run: date +"%Y-%m-%d %H:%M:%S"
 
         
