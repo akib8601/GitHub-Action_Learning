@@ -1,8 +1,8 @@
-name: Practice2
+name: Complex
 
 on:
-  #push: 
-  workflow_dispatch:
+  push: 
+  #workflow_dispatch:
 
 jobs: 
 
