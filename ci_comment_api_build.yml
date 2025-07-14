@@ -1,0 +1,103 @@
+name: ci_reva-comment-api_image_build
+on:
+  #push:
+    # branches: [areva, my-branch]
+
+ 
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: uhg-runner
+    env:
+      JAVA_VERSION: '17'
+      jFrog_ARTIFACTORY_URL: 'docker.repo1.uhc.com'
+
+      ############################################################################################
+      # For password injection, we will have to set the path to build the image
+      # Environment | Environment1
+      #  dev        |    dev
+      #  test       |    tst
+      #  stage      |    stg
+      #  prd        |    prd
+      #                                                                                         
+      ############################################################################################
+      description: 'Environment to build and push the image for (dev, test, stage & prd)'
+      Environment: 'dev'
+
+      description1: 'Environment to build and push the image for (dev, tst, stg & prd)'
+      Environment1: 'dev'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Deployment Env
+        run: |
+          echo "ENVIRONMENT=${{ env.Environment }}" >> $GITHUB_ENV
+          echo "ENVIRONMENT1=${{ env.Environment1 }}" >> $GITHUB_ENV
+
+      - name: Set up Java
+        uses: actions/setup-java@v2
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+
+      - name: Injection of Secrets in Config file
+        env:
+          REVA_USERNAME: ${{ secrets.REVA_USERNAME }}
+          REVA_PASSWORD: ${{ secrets.REVA_PASSWORD }}
+          NICE_USERNAME: ${{ secrets.NICE_USERNAME }}
+          NICE_PASSWORD: ${{ secrets.NICE_PASSWORD }}
+          NICE_USERNAME_PRD: ${{ secrets.NICE_USERNAME_PRD }}
+          NICE_PASSWORD_PRD: ${{ secrets.NICE_PASSWORD_PRD }}
+          SERVICE_USERNAME: ${{ secrets.SERVICE_USERNAME }}
+          SERVICE_PASSWORD: ${{ secrets.SERVICE_PASSWORD }}
+          PROD_SERVICE_USERNAME: ${{ secrets.PROD_SERVICE_USERNAME }}
+          PROD_SERVICE_PASSWORD: ${{ secrets.PROD_SERVICE_PASSWORD }}
+
+        run: |
+          echo "Injecting secrets into RevaEnv.properties"
+          ENVIRONMENT=${{ env.Environment }}
+          ENVIRONMENT1=${{ env.Environment1 }}
+          
+          echo "Processed Environment Value: $ENVIRONMENT"
+          echo "Processed Environment1 Value: $ENVIRONMENT1"
+          
+          # For non prod
+          echo "Service password injection in properties file"
+          sed -i -e "s|\${SERVICE_USERNAME}|$SERVICE_USERNAME|g" -e "s|\${SERVICE_PASSWORD}|$SERVICE_PASSWORD|g" reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/MatchClaimService.properties reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/MatchMemberService.properties reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/UpdateCommentService.properties 
+
+          # For prod
+          sed -i -e "s|\${PROD_SERVICE_USERNAME}|$PROD_SERVICE_USERNAME|g" -e "s|\${PROD_SERVICE_PASSWORD}|$PROD_SERVICE_PASSWORD|g" reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/MatchClaimService.properties reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/MatchMemberService.properties reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/UpdateCommentService.properties 
+
+          # For Reva DB
+          sed -i "s|\${REVA_USERNAME}|$REVA_USERNAME|g" reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/RevaEnv.properties
+          sed -i "s|\${REVA_PASSWORD}|$REVA_PASSWORD|g" reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/RevaEnv.properties
+
+          # For lower env
+          sed -i "s|\${NICE_USERNAME}|$NICE_USERNAME|g" reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/RevaEnv.properties
+          sed -i "s|\${NICE_PASSWORD}|$NICE_PASSWORD|g" reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/RevaEnv.properties
+          
+          # For production env 
+          sed -i "s|\${NICE_USERNAME_PRD}|$NICE_USERNAME_PRD|g" reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/RevaEnv.properties
+          sed -i "s|\${NICE_PASSWORD_PRD}|$NICE_PASSWORD_PRD|g" reva-comment-api/$ENVIRONMENT/rev/$ENVIRONMENT1/config/RevaEnv.properties
+
+      - name: Log in to jFrog_ARTIFACTORY_Repo
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.jFrog_ARTIFACTORY_URL }}
+          username: ${{ secrets.ARTIFACTORY_CREDS_USR }}
+          password: ${{ secrets.ARTIFACTORY_CREDS_PSW }}
+
+      - name: Build Docker image
+        run: |
+          ENVIRONMENT=${{ env.Environment }}
+          docker build -t ${{ env.jFrog_ARTIFACTORY_URL }}/nice_phs_reva/reva-comment-api-images:$ENVIRONMENT-chainguard-base-wildfly36 ./reva-comment-api/$ENVIRONMENT/
+
+      - name: Push Docker image
+        run: |
+          ENVIRONMENT=${{ env.Environment }}
+          docker login -u ${{ secrets.ARTIFACTORY_CREDS_USR }} -p ${{ secrets.ARTIFACTORY_CREDS_PSW }} docker.repo1.uhc.com
+          docker push ${{ env.jFrog_ARTIFACTORY_URL }}/nice_phs_reva/reva-comment-api-images:$ENVIRONMENT-chainguard-base-wildfly36

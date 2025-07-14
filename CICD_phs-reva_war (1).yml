@@ -1,0 +1,527 @@
+name: CI/CD Pipeline
+
+on: 
+  push:
+   branches: [CICD_workflow_implementation , my-branch]
+    #branches: 
+     # - CICD_workflow_implementation
+  
+  workflow_dispatch:
+ 
+env:
+  JAVA_VERSION: '17' 
+  HCCK8S_ELR_DC: hcc-elr-prd-usr001-0.optum.com
+  HCCK8S_CTC_DC: hcc-elr-prd-usr001-0.optum.com
+  HCCK8S_ELR_NONPRD_DC: hcc-elr-nonprd-usr001-0.optum.com
+  HCCK8S_CTC_NONPRD_DC: hcc-ctc-nonprd-usr001-0.optum.com
+  BASE_DEV_DOCKER_IMAGE: 'docker.repo1.uhc.com/nice_phs_reva/environment-images:dev-chainguard-wolfi-w25_Action'
+  BASE_TEST_DOCKER_IMAGE: 'docker.repo1.uhc.com/nice_phs_reva/environment-images:test-chainguard-wolfi-w25_Action'
+  BASE_STAGE_DOCKER_IMAGE: 'docker.repo1.uhc.com/nice_phs_reva/environment-images:stage-chainguard-wolfi-w25_Action'
+  BASE_PROD_DOCKER_IMAGE: 'docker.repo1.uhc.com/nice_phs_reva/environment-images:prd-chainguard-wolfi-w25_Action'
+  
+  warfile: 'phs_reva.war'
+  HCCK8s_ELR_APISERVER: 'https://10.28.67.67:443' 
+  HCCK8s_CTC_APISERVER: 'https://10.29.84.20:443'
+  
+  HCCK8s_ELR_NONPRD_APISERVER: 'https://10.28.255.1:443'
+  HCCK8s_CTC_NONPRD_APISERVER: 'https://10.29.248.51:443'
+  
+  HCCK8s_DEV_NAMESPACE: "reva-dev"
+  HCCK8s_TEST_NAMESPACE: "reva-test"
+  HCCK8s_STAGE_ELR_NAMESPACE: "reva-stage-elr"
+  HCCK8s_STAGE_CTC_NAMESPACE: "reva-stage-ctc"
+  HCCK8s_PROD_ELR_NAMESPACE: "reva-prd-elr"
+  HCCK8s_PROD_CTC_NAMESPACE: "reva-prd-ctc"
+  
+  #####################################################
+  # 1. After final coding and testing in dev environment.
+  # 2. You need to pass build no. for upper enviroment like test,stage and prod in given below variable
+  War_build_no: "48"
+  #####################################################
+
+jobs:
+  setup:
+    name: Setup Environment
+    runs-on: uhg-runner
+    outputs:
+      environment: ${{ steps.setenv.outputs.environment }}
+    steps:
+      - id: setenv
+
+        ##################################################################
+        # To deploying the new war file in different environment, you will have to pass env name in environment variable.
+        # For Dev == dev
+        # For test == test
+        # For elr stage == stage_elr
+        # For prod ctc == prod_ctc 
+        # For prod elr == prod_elr 
+        run: echo "environment=prod_ctc" >> $GITHUB_OUTPUT
+       ###################################################################
+        
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'latest'
+
+  build:
+    name: Building  war file
+    needs: [setup]
+    if: ${{ needs.setup.outputs.environment == 'dev' }}
+    runs-on: uhg-runner
+    env:
+      WORKSPACE: ${{ github.workspace }}
+      GIT_COMMIT: ${{ github.sha }}
+      GIT_BRANCH: ${{ github.ref_name }}
+      GIT_URL: ${{ github.server_url }}/${{ github.repository }}
+      BUILD_NUMBER: ${{ github.run_number }}
+      BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      EVENT_POSTER_URL: ${{ secrets.EVENT_POSTER_URL }}
+      #EVENT_POSTER_URL = http://kafkaposter-pipeline-events.optum.com/postevent
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Ant
+        run: sudo apt-get update && sudo apt-get install -y ant
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Read buildEventG.json
+        id: readevent
+        run: |
+          if [ ! -f buildEventG.json ]; then echo '{}' > buildEventG.json; fi
+          echo "##[set-output name=json;]$(cat buildEventG.json)"
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Build WAR
+        id: build_war
+        run: |
+          set -e
+          start_time=$(date +%s%3N)
+          status="SUCCESS"
+          {
+          ls -la ./reva-dev/code
+          java -version
+          chmod +x ./reva-dev/code/build.xml
+          ant -file ./reva-dev/code/build.xml
+          chmod +x ./reva-dev/code/_output/lib/phs_reva.war
+          } || status="FAILURE"
+          end_time=$(date +%s%3N)
+          duration_ms=$((end_time - start_time))
+          jq --arg status "$status" \
+             --argjson timestamp_ms "$end_time" \
+             --argjson duration_ms "$duration_ms" \
+             --arg reportingToolURL "$BUILD_URL" \
+             --arg gitCommit "$GIT_COMMIT" \
+             --arg gitBranch "$GIT_BRANCH" \
+             --arg gitURL "$GIT_URL" \
+             --arg buildId "$BUILD_NUMBER" \
+             --arg buildUrl "$BUILD_URL" \
+            '.eventData.status=$status
+            | .eventData.timestamp_ms=$timestamp_ms
+            | .eventData.duration_ms=$duration_ms
+            | .eventData.reportingToolURL=$reportingToolURL
+            | .pipelineData.gitCommit=$gitCommit
+            | .pipelineData.gitBranch=$gitBranch
+            | .pipelineData.gitURL=$gitURL
+            | .buildData.buildId=$buildId
+            | .buildData.buildUrl=$buildUrl' \
+            buildEventG.json > buildEventG.tmp && mv buildEventG.tmp buildEventG.json
+
+      - name: Post build event
+        run: |
+          curl --trace-ascii "-" -d "@buildEventG.json" -H "Content-Type: application/json" -X POST "$EVENT_POSTER_URL"
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phs_reva-war
+          path: ./reva-dev/code/_output/lib/phs_reva.war
+
+      - name: Archive buildEventG.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildEventG
+          path: buildEventG.json
+
+  upload:
+    name: Upload Artifact
+    if: ${{ needs.setup.outputs.environment == 'dev' }}
+    runs-on: uhg-runner
+    needs: build
+    steps:
+      - name: Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phs_reva-war
+
+      - name: Debug Directory Contents
+        run: ls -la
+
+      - name: Set File Permissions
+        run: chmod +r ./phs_reva.war
+
+      - name: Upload to Artifactory
+        env:
+          ARTIFACTORY_CREDS_USR: ${{ secrets.ARTIFACTORY_CREDS_USR }}
+          ARTIFACTORY_CREDS_PSW: ${{ secrets.ARTIFACTORY_CREDS_PSW }}
+        run: |
+          curl -u $ARTIFACTORY_CREDS_USR:$ARTIFACTORY_CREDS_PSW \
+            -X PUT "https://repo1.uhc.com:443/artifactory/UHG-Releases/com/optum/reva/phs_reva/${{ github.run_number }}/phs_reva.war" \
+            -T phs_reva.war
+
+  Dev_ELR_NON_PRD:
+    name: Dev_ELR_NON_PRD
+    if: ${{ needs.setup.outputs.environment == 'dev' }}
+    runs-on: uhg-runner
+    needs: upload
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download WAR from Artifactory and set URL env
+        env:
+          ARTIFACTORY_CREDS_USR: ${{ secrets.ARTIFACTORY_CREDS_USR }}
+          ARTIFACTORY_CREDS_PSW: ${{ secrets.ARTIFACTORY_CREDS_PSW }}
+        run: |
+          WAR_URL="https://repo1.uhc.com:443/artifactory/UHG-Releases/com/optum/reva/phs_reva/${{ github.run_number }}/phs_reva.war"
+          echo " war_url = ${{ WAR_URL }}"
+          curl -u $ARTIFACTORY_CREDS_USR:$ARTIFACTORY_CREDS_PSW -X GET "$WAR_URL" -o phs_reva.war
+          echo "DOWNLOADED_WAR_URL=$WAR_URL" >> $GITHUB_ENV
+
+      - name: Show Build Number
+        run: echo "Build no. = ${{ github.run_number }}"
+
+      - name: Set up environment variables
+        run: |
+          echo "BASE_DEV_DOCKER_IMAGE=$BASE_DEV_DOCKER_IMAGE" >> $GITHUB_ENV
+
+      - name: Read deployEventG.json
+        id: read-json
+        run: |
+          deployEventGJson=$(cat deployEventG.json)
+          echo "::set-output name=deployEventGJson::$deployEventGJson"
+        shell: bash
+
+      - name: Deploy to Kubernetes
+        env:
+          BASE_DEV_DOCKER_IMAGE: ${{ env.BASE_DEV_DOCKER_IMAGE }}
+         
+        run: |
+          echo "Starting deployment to Kubernetes for ${{ github.event.inputs.environment }}"
+          startTime=$(date +%s)
+          echo "inside Dev"
+          set +e
+          # Load deployEventGJson
+          deployEventGJsonData=$(cat deployEventG.json)
+          sed -i "s,BASEDOCKER_IMAGE,${{ env.BASE_DEV_DOCKER_IMAGE }}," yamls/deployment_reva-dev.yaml
+          sed -i "s,WARFILE_URI,${DOWNLOADED_WAR_URL}," yamls/deployment_reva-dev.yaml
+          sed -i "s,WAR_FILE,${{ env.warfile }}," yamls/deployment_reva-dev.yaml
+          cat yamls/deployment_reva-dev.yaml
+          # Step 3: Download the certificate file
+          wget https://k8s.optum.com/certs/hcck8s_elrnonprd-ca.crt -O hcck8s_elrnonprd-ca.crt
+          echo "DEV_TOKEN=${{ secrets.DEV_TOKEN }}" | grep .
+          mkdir -p .kube
+          touch .kube/config
+          # Set cluster (name must match in context)
+          kubectl config set-cluster kubernetes --server=${{ env.HCCK8s_ELR_NONPRD_APISERVER }} --certificate-authority=hcck8s_elrnonprd-ca.crt
+          # Set credentials with token
+          kubectl config set-credentials k8s-user --token="${{ secrets.DEV_TOKEN }}"
+          # Set context (must use 'kubernetes' as cluster name)
+          kubectl config set-context k8s --user=k8s-user --cluster=kubernetes --namespace=${{ env.HCCK8s_DEV_NAMESPACE }}
+          # Use context
+          kubectl config use-context k8s
+          # Check current context
+          kubectl config current-context
+          # Get pods (should work)
+          kubectl get pods
+          # Apply deployment
+          kubectl apply -f yamls/deployment_reva-dev.yaml --validate=false
+          kubectl rollout restart deployment reva-dev
+          echo "Deployed war_file with dev build no. is = ${{ github.run_number }}"
+
+  Test_ELR_NON_PRD:
+    name: Test_ELR_NON_PRD
+    if: ${{ needs.setup.outputs.environment == 'test' }}
+    runs-on: uhg-runner
+    needs: setup
+    #if: ${{ github.event.inputs.environment == 'reva-dev' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download WAR from Artifactory and set URL env
+        env:
+          ARTIFACTORY_CREDS_USR: ${{ secrets.ARTIFACTORY_CREDS_USR }}
+          ARTIFACTORY_CREDS_PSW: ${{ secrets.ARTIFACTORY_CREDS_PSW }}
+        run: |
+          WAR_URL="https://repo1.uhc.com:443/artifactory/UHG-Releases/com/optum/reva/phs_reva/${{ env.War_build_no }}/phs_reva.war"
+          curl -u $ARTIFACTORY_CREDS_USR:$ARTIFACTORY_CREDS_PSW -X GET "$WAR_URL" -o phs_reva.war
+          echo "DOWNLOADED_WAR_URL=$WAR_URL" >> $GITHUB_ENV
+
+      - name: Set up environment variables
+        run: |
+          echo "BASE_TEST_DOCKER_IMAGE=$BASE_TEST_DOCKER_IMAGE" >> $GITHUB_ENV
+
+      - name: Read deployEventG.json
+        id: read-json
+        run: |
+          deployEventGJson=$(cat deployEventG.json)
+          echo "::set-output name=deployEventGJson::$deployEventGJson"
+        shell: bash
+
+      - name: Deploy to Kubernetes
+        env:
+          BASE_TEST_DOCKER_IMAGE: ${{ env.BASE_TEST_DOCKER_IMAGE }}
+          
+        run: |
+          echo "Starting deployment to Kubernetes for ${{ github.event.inputs.environment }}"
+          startTime=$(date +%s)
+          echo "inside test"
+          set +e
+          # Load deployEventGJson
+          deployEventGJsonData=$(cat deployEventG.json)
+          sed -i "s,BASEDOCKER_IMAGE,${{ env.BASE_TEST_DOCKER_IMAGE }}," yamls/deployment_reva-test.yaml
+          sed -i "s,WAR_FILE,${{ env.warfile }}," yamls/deployment_reva-test.yaml
+          sed -i "s,WARFILE_URI,${DOWNLOADED_WAR_URL}," yamls/deployment_reva-test.yaml
+          cat yamls/deployment_reva-test.yaml
+          # Step 3: Download the certificate file
+          wget https://k8s.optum.com/certs/hcck8s_elrnonprd-ca.crt -O hcck8s_elrnonprd-ca.crt
+          echo "TEST_TOKEN=${{ secrets.TEST_TOKEN }}" | grep .
+          mkdir -p .kube
+          touch .kube/config
+          # Set cluster (name must match in context)
+          kubectl config set-cluster kubernetes --server=${{ env.HCCK8s_ELR_NONPRD_APISERVER }} --certificate-authority=hcck8s_elrnonprd-ca.crt
+          # Set credentials with token
+          kubectl config set-credentials k8s-user --token="${{ secrets.TEST_TOKEN }}"
+          # Set context (must use 'kubernetes' as cluster name)
+          kubectl config set-context k8s --user=k8s-user --cluster=kubernetes --namespace=${{ env.HCCK8s_TEST_NAMESPACE }}
+          # Use context
+          kubectl config use-context k8s
+          # Check current context
+          kubectl config current-context
+          # Get pods (should work)
+          kubectl get pods
+          # Apply deployment
+          kubectl apply -f yamls/deployment_reva-test.yaml --validate=false
+          kubectl rollout restart deployment reva-test
+          echo "Deployed war_file with dev build no. is = ${{ env.War_build_no }}"
+          # Check deployment status and update deployEventG.json
+
+  STAGE_ELR_NON_PRD:
+    name: STAGE_ELR_NON_PRD
+    if: ${{ needs.setup.outputs.environment == 'stage_elr' }}
+    runs-on: uhg-runner
+    needs: setup
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download WAR from Artifactory and set URL env
+        env:
+          ARTIFACTORY_CREDS_USR: ${{ secrets.ARTIFACTORY_CREDS_USR }}
+          ARTIFACTORY_CREDS_PSW: ${{ secrets.ARTIFACTORY_CREDS_PSW }}
+        run: |
+          WAR_URL="https://repo1.uhc.com:443/artifactory/UHG-Releases/com/optum/reva/phs_reva/${{ env.War_build_no }}/phs_reva.war"
+          curl -u $ARTIFACTORY_CREDS_USR:$ARTIFACTORY_CREDS_PSW -X GET "$WAR_URL" -o phs_reva.war
+          echo "DOWNLOADED_WAR_URL=$WAR_URL" >> $GITHUB_ENV
+
+      - name: Set up environment variables
+        run: |
+          echo "BASE_STAGE_DOCKER_IMAGE=$BASE_STAGE_DOCKER_IMAGE" >> $GITHUB_ENV
+
+      - name: Read deployEventG.json
+        id: read-json
+        run: |
+          deployEventGJson=$(cat deployEventG.json)
+          echo "::set-output name=deployEventGJson::$deployEventGJson"
+        shell: bash
+
+      - name: Deploy to Kubernetes
+        env:
+          BASE_STAGE_DOCKER_IMAGE: ${{ env.BASE_STAGE_DOCKER_IMAGE }}
+         
+        run: |
+          echo "Starting deployment to Kubernetes for ${{ github.event.inputs.environment }}"
+          startTime=$(date +%s)
+          echo "inside stage_elr "
+          set +e
+          # Load deployEventGJson
+          deployEventGJsonData=$(cat deployEventG.json)
+          sed -i "s,BASEDOCKER_IMAGE,${{ env.BASE_STAGE_DOCKER_IMAGE }}," yamls/deployment_reva-stage.yaml
+          sed -i "s,WAR_FILE,${{ env.warfile }}," yamls/deployment_reva-stage.yaml
+          sed -i "s,WARFILE_URI,${DOWNLOADED_WAR_URL}," yamls/deployment_reva-stage.yaml
+          cat yamls/deployment_reva-stage.yaml
+          # Step 3: Download the certificate file
+          wget https://k8s.optum.com/certs/hcck8s_elrnonprd-ca.crt -O hcck8s_elrnonprd-ca.crt
+          echo "STAGE_ELRN_TOKEN=${{ secrets.STAGE_ELRN_TOKEN }}" | grep .
+          mkdir -p .kube
+          touch .kube/config
+          # Set cluster (name must match in context)
+          kubectl config set-cluster kubernetes --server=${{ env.HCCK8s_ELR_NONPRD_APISERVER }} --certificate-authority=hcck8s_elrnonprd-ca.crt
+          # Set credentials with token
+          kubectl config set-credentials k8s-user --token="${{ secrets.STAGE_ELRN_TOKEN }}"
+          # Set context (must use 'kubernetes' as cluster name)
+          kubectl config set-context k8s --user=k8s-user --cluster=kubernetes --namespace=${{ env.HCCK8s_STAGE_ELR_NAMESPACE }}
+          # Use context
+          kubectl config use-context k8s
+          # Check current context
+          kubectl config current-context
+          # Get pods (should work)
+          kubectl get pods
+          # Apply deployment
+          kubectl apply -f yamls/deployment_reva-stage.yaml --validate=false
+          kubectl rollout restart deployment reva-stage
+          echo "Deployed war_file with dev build no. is = ${{ env.War_build_no }}"
+          # Check deployment status and update deployEventG.json
+
+  production_approval:
+    name: Pause for production_approval
+    if: ${{ needs.setup.outputs.environment == 'prod_elr' || needs.setup.outputs.environment == 'prod_ctc' }}
+    runs-on: uhg-runner
+    needs: [setup]
+    environment:
+      name: production_approval
+      # reviewers:
+      #   - your-github-username
+    steps:
+      - name: Awaiting Manual Approval
+        run: echo "Workflow paused for manual approval. Please approve to continue."
+
+
+  PROD_ELR:
+    name: PROD_ELR
+    if: ${{ needs.setup.outputs.environment == 'prod_elr' }}
+    runs-on: uhg-runner
+    needs: production_approval
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download WAR from Artifactory and set URL env
+        env:
+          ARTIFACTORY_CREDS_USR: ${{ secrets.ARTIFACTORY_CREDS_USR }}
+          ARTIFACTORY_CREDS_PSW: ${{ secrets.ARTIFACTORY_CREDS_PSW }}
+        run: |
+          WAR_URL="https://repo1.uhc.com:443/artifactory/UHG-Releases/com/optum/reva/phs_reva/${{ env.War_build_no }}/phs_reva.war"
+          curl -u $ARTIFACTORY_CREDS_USR:$ARTIFACTORY_CREDS_PSW -X GET "$WAR_URL" -o phs_reva.war
+          echo "DOWNLOADED_WAR_URL=$WAR_URL" >> $GITHUB_ENV
+      - name: Set up environment variables
+        run: |
+          echo "BASE_PROD_DOCKER_IMAGE=$BASE_PROD_DOCKER_IMAGE" >> $GITHUB_ENV
+      - name: Read deployEventG.json
+        id: read-json
+        run: |
+          deployEventGJson=$(cat deployEventG.json)
+          echo "::set-output name=deployEventGJson::$deployEventGJson"
+        shell: bash
+
+      - name: Deploy to Kubernetes
+        env:
+          BASE_PROD_DOCKER_IMAGE: ${{ env.BASE_PROD_DOCKER_IMAGE }}
+        run: |
+          echo "Starting deployment to Kubernetes for ${{ github.event.inputs.environment }}"
+          startTime=$(date +%s)
+          echo "inside prod_elr "
+          set +e
+          # Load deployEventGJson
+          deployEventGJsonData=$(cat deployEventG.json)
+          sed -i "s,BASEDOCKER_IMAGE,${{ env.BASE_PROD_DOCKER_IMAGE }}," yamls/deployment_reva-prd.yaml
+          sed -i "s,WAR_FILE,${{ env.warfile }}," yamls/deployment_reva-prd.yaml
+          sed -i "s,WARFILE_URI,${DOWNLOADED_WAR_URL}," yamls/deployment_reva-prd.yaml
+          cat yamls/deployment_reva-prd.yaml
+          # Step 3: Download the certificate file
+          #wget https://k8s.optum.com/certs/hcck8s_elrnonprd-ca.crt -O hcck8s_elrnonprd-ca.crt
+          wget https://k8s.optum.com/certs/hcck8s_elr-ca.crt -O elrprdusr001.crt
+          echo "PRD_ELR_TOKEN=${{ secrets.PRD_ELR_TOKEN }}" | grep .
+          mkdir -p .kube
+          touch .kube/config
+          # Set cluster (name must match in context)
+          kubectl config set-cluster kubernetes --server=${{ env.HCCK8s_ELR_APISERVER }} --certificate-authority=elrprdusr001.crt
+          # Set credentials with token
+          kubectl config set-credentials k8s-user --token="${{ secrets.PRD_ELR_TOKEN }}"
+          # Set context (must use 'kubernetes' as cluster name)
+          kubectl config set-context k8s --user=k8s-user --cluster=kubernetes --namespace=${{ env.HCCK8s_PROD_ELR_NAMESPACE }}
+          # Use context
+          kubectl config use-context k8s
+          # Check current context
+          kubectl config current-context
+          # Get pods (should work)
+          kubectl get pods
+          # Apply deployment
+          #kubectl apply -f yamls/deployment_reva-prd.yaml --validate=false
+          #kubectl rollout restart deployment reva-prd
+          echo "Deployed war_file with dev build no. is = ${{ env.War_build_no }}"
+          
+  
+  PROD_CTC:
+    name: PROD_CTC
+    if: ${{ needs.setup.outputs.environment == 'prod_ctc' }}
+    runs-on: uhg-runner
+    needs: production_approval
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Download WAR from Artifactory and set URL env
+        env:
+          ARTIFACTORY_CREDS_USR: ${{ secrets.ARTIFACTORY_CREDS_USR }}
+          ARTIFACTORY_CREDS_PSW: ${{ secrets.ARTIFACTORY_CREDS_PSW }}
+        run: |
+          WAR_URL="https://repo1.uhc.com:443/artifactory/UHG-Releases/com/optum/reva/phs_reva/${{ env.War_build_no }}/phs_reva.war"
+          curl -u $ARTIFACTORY_CREDS_USR:$ARTIFACTORY_CREDS_PSW -X GET "$WAR_URL" -o phs_reva.war
+          echo "DOWNLOADED_WAR_URL=$WAR_URL" >> $GITHUB_ENV
+      - name: Set up environment variables
+        run: |
+          echo "BASE_PROD_DOCKER_IMAGE=$BASE_PROD_DOCKER_IMAGE" >> $GITHUB_ENV
+      - name: Read deployEventG.json
+        id: read-json
+        run: |
+          deployEventGJson=$(cat deployEventG.json)
+          echo "::set-output name=deployEventGJson::$deployEventGJson"
+        shell: bash
+
+      - name: Deploy to Kubernetes
+        env:
+          BASE_PROD_DOCKER_IMAGE: ${{ env.BASE_PROD_DOCKER_IMAGE }}
+        run: |
+          echo "Starting deployment to Kubernetes for ${{ github.event.inputs.environment }}"
+          startTime=$(date +%s)
+          echo "inside prod_ctc"
+          set +e
+          # Load deployEventGJson
+          deployEventGJsonData=$(cat deployEventG.json)
+          sed -i "s,BASEDOCKER_IMAGE,${{ env.BASE_PROD_DOCKER_IMAGE }}," yamls/deployment_reva-prd.yaml
+          sed -i "s,WAR_FILE,${{ env.warfile }}," yamls/deployment_reva-prd.yaml
+          sed -i "s,WARFILE_URI,${DOWNLOADED_WAR_URL}," yamls/deployment_reva-prd.yaml
+          cat yamls/deployment_reva-prd.yaml
+          # Step 3: Download the certificate file
+          wget https://k8s.optum.com/certs/hcck8s_ctc-ca.crt -O ctcprdusr001.crt
+          echo "PRD_CTC_TOKEN=${{ secrets.PRD_CTC_TOKEN }}" | grep .
+          mkdir -p .kube
+          touch .kube/config
+          # Set cluster (name must match in context)
+          kubectl config set-cluster kubernetes --server=${{ env.HCCK8s_CTC_APISERVER }} --certificate-authority=ctcprdusr001.crt
+          # Set credentials with token
+          kubectl config set-credentials k8s-user --token="${{ secrets.PRD_CTC_TOKEN }}"
+          # Set context (must use 'kubernetes' as cluster name)
+          kubectl config set-context k8s --user=k8s-user --cluster=kubernetes --namespace=${{ env.HCCK8s_PROD_CTC_NAMESPACE }}
+          # Use context
+          kubectl config use-context k8s
+          # Check current context
+          kubectl config current-context
+          # Get pods (should work)
+          kubectl get pods
+          # Apply deployment
+          #kubectl apply -f yamls/deployment_reva-prd.yaml --validate=false
+          #kubectl rollout restart deployment reva-prd
+          echo "Deployed war_file with dev build no. is = ${{ env.War_build_no }}"

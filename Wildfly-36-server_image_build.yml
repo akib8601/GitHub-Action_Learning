@@ -1,0 +1,42 @@
+name: Server_image_build
+
+on:
+  #push:
+   # branches: [areva, my-branch] 
+   
+  workflow_dispatch:
+
+jobs:
+  build:
+    # if: github.ref == 'refs/heads/work_flow_POC'
+    runs-on: uhg-runner
+
+    env:
+      JAVA_VERSION: '17'
+      jFrog_ARTIFACTORY_URL: 'docker.repo1.uhc.com'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Java
+      uses: actions/setup-java@v2
+      with:
+        java-version: ${{ env.JAVA_VERSION }}
+        distribution: 'temurin'
+
+    - name: Log in to jFrog_ARTIFACTORY_Repo
+      uses: docker/login-action@v2
+      with:
+        registry: ${{ env.jFrog_ARTIFACTORY_URL }}
+        username: ${{ secrets.ARTIFACTORY_CREDS_USR }}
+        password: ${{ secrets.ARTIFACTORY_CREDS_PSW }}
+
+    - name: Build Docker image
+      run: |
+        docker login -u ${{ secrets.ARTIFACTORY_CREDS_USR }} -p ${{ secrets.ARTIFACTORY_CREDS_PSW }} optum-docker-auth-prod.repo1.uhc.com
+        docker build -t ${{ env.jFrog_ARTIFACTORY_URL }}/nice_phs_reva/reva-wildfly:chainguard-base-wildfly36 ./wildfly-36-server-images/
+    - name: Push Docker image
+      run: |
+        docker login -u ${{ secrets.ARTIFACTORY_CREDS_USR }} -p ${{ secrets.ARTIFACTORY_CREDS_PSW }} docker.repo1.uhc.com
+        docker push ${{ env.jFrog_ARTIFACTORY_URL }}/nice_phs_reva/reva-wildfly:chainguard-base-wildfly36
